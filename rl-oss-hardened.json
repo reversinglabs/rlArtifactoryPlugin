@@ -1,0 +1,44 @@
+{
+    "rl-profile": {
+        "schema": 1,
+        "name": "Open Source [hardened]",
+        "info": "Spectra Assure analysis configuration aimed towards releasing quality software that minimizes end-user deployment risks.",
+        "timestamp": "2026-01-01T12:00:00+0000",
+        "configuration": {
+            "policy": {
+                "min_catalogue": 5,
+                "rl_scan_level": 5,
+                "rl_auto_approval": false,
+                "assessments": {
+                    "secrets": {
+                        "ignored": false
+                    },
+                    "licenses": {
+                        "ignored": false
+                    },
+                    "vulnerabilities": {
+                        "ignored": false
+                    },
+                    "hardening": {
+                        "ignored": false
+                    },
+                    "tampering": {
+                        "ignored": false
+                    },
+                    "malware": {
+                        "ignored": false
+                    }
+                },
+                "governance": {
+                    "community": {
+                        "min_package_age": 90,
+                        "min_version_age": 7,
+                        "allow": [],
+                        "block": []
+                    }
+                },
+                "overrides": {}
+            }
+        }
+    }
+}

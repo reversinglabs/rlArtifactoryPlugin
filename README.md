@@ -1,110 +1,116 @@
-# rlArtifactoryPlugin
+# About rlArtifactoryPlugin
 
-ReversingLabs provides a separate Artifactory plugin
-called `rlArtifactoryPlugin` that can automatically
-block download attempts for artifacts with the scan result set to `fail`.
+ReversingLabs provides this JFrog Artifactory plugin to check the safety of open source software (OSS) packages and dependencies in your projects. It leverages the [Spectra Assure Community](https://secure.software/)
+data set and can be used with a free Community API token. Alternatively, Spectra Assure customers on the Essentials or Enterprise tier can use a Portal API token for unlimited lookups. More information about [supported API tiers](https://docs.secure.software/community/tiers-guide) is available in the official Spectra Assure Community documentation.
 
-To install the plugin,
-copy the `rlArtifactoryPlugin.groovy` script into the `/opt/jfrog/artifactory/var/etc/artifactory/plugins/` directory.
+A key feature of the plugin is blocking downloads of unsafe software artifacts, preventing them from being used by development teams and spreading in corporate environments.
+When the Artifactory REST API is used to download/retrieve an unsafe artifact, the plugin returns an HTTP 403 error and the response includes a link to the report so the users can better understand why the error occurred.
 
-The plugin works in combination with:
-[rl-scan-artifactory](https://github.com/reversinglabs/rl-scan-artifactory) .
+NOTE: A separate ReversingLabs integration ([rl-scan-artifactory](https://pypi.org/project/rl-scan-artifactory/)) is available to Spectra Assure customers on the Essentials or Enterprise tier. This integration can be used to scan full binary software packages with Spectra Assure. It may be used in conjunction with this plugin, but it is not required.
 
-## Plugin configuration
 
-To activate the plugin, create the `rlArtifactoryPlugin.properties` file in the plugin directory:
+## Plugin installation
 
-```
-/opt/jfrog/artifactory/var/etc/artifactory/plugins/rlArtifactoryPlugin.properties
-```
+The `plugins` directory is typically located in:
 
-### Block
-In the `rlArtifactoryPlugin.properties` file, set the `block_downloads_failed` field to `'true'`.
-This is required for the plugin to function.
+- `/opt/jfrog/artifactory/var/etc/artifactory/plugins/`
 
-```
-block_downloads_failed = 'true'
-```
+The `plugins-lib` directory is typically:
 
-### Allow
+- `/opt/jfrog/artifactory/var/etc/artifactory/plugins/lib/`
 
-The `rlArtifactoryPlugin.properties` file also allows optional allowlisting for repositories and IP addresses.
+If needed, create the `plugins-lib` directory
+and set the user and group to `artifactory` with the following commands:
 
-To ensure that specific repositories will never block any download request,
-you can populate the field `never_block_repo_list` like in the following example:
-
-```
-never_block_repo_list = [
-    'repoName1',
-    'repoName2'
-]
+```sh
+    # as root or as user artifactory
+    cd /opt/jfrog/artifactory/var/etc/artifactory/plugins/
+    mkdir -p lib/
+    chown artifactory:artifactory lib/
+    chmod 775 lib/
 ```
 
-To ensure that download requests from specific IP addresses will never be blocked,
-you can populate the field `never_block_ip_list` like in the following example:
+Install steps:
+
+1. Copy the `rlArtifactoryPlugin.groovy` script into the `plugins` directory.
+1. Copy the `rlArtifactoryPlugin.properties` file into the `plugins` directory.
+1. Place the `org-reversinglabs-securesoftwareapi.jar` file in the `plugins-lib` directory.
+1. Copy the 4 `json` files into the `plugins` directory.
+
+The 4 json files are:
+- `rl-oss-baseline.json`
+- `rl-oss-hardened.json`
+- `rl-oss-minimum.json`
+- `rl-profile.json`
+
+Ensure all files are set to 'user:group' of `artifactory:artifactory` and mode 644:
+
+```sh
+    # as root or as user artifactory
+    cd /opt/jfrog/artifactory/var/etc/artifactory/plugins/
+
+    chown artifactory:artifactory rlArtifactoryPlugin.groovy
+    chown artifactory:artifactory rlArtifactoryPlugin.properties
+    chown artifactory:artifactory lib/org-reversinglabs-securesoftwareapi.jar
+    chown artifactory:artifactory rl-*.json
+
+    chmod 644 rlArtifactoryPlugin.groovy
+    chmod 644 rlArtifactoryPlugin.properties
+    chmod 644 lib/org-reversinglabs-securesoftwareapi.jar
+    chmod 644 rl-*.json
+```
+
+## General plugin configuration
+
+To configure the plugin as desired, open `rlArtifactoryPlugin.properties` at the following location:
 
 ```
-never_block_ip_list = [
-    '1.2.3.4',
-    '5.6.7.8'
-]
+    /opt/jfrog/artifactory/var/etc/artifactory/plugins/rlArtifactoryPlugin.properties
 ```
 
-This option is particularly suited for allowing all downloads from the host that runs the `rl-scan-artifactory` integration.
+All configuration options are documented in [README-properties](README-properties.md)
 
-### Feedback
+## Activate the plugin
 
-You can also add information to the 403 reply from rlArtifactoryPlugin how to contact an administrator by using:
-
-```
-admin_name = 'Your Friendly Administrator'
-admin_email = 'your.friendly@administrator.noreply'
-```
-
-### Report
-
-The 403 reply from rlArtifactoryPlugin will show the link to the report
-so the user can find out more about the reasons whey the block was  enforced.
-
-### Activate
-
-Restart Artifactory to activate the plugin and apply configuration changes.
-
+Restart Artifactory to activate the plugin and apply configuration changes. To reload the plugin without restarting, Artifactory's `Reload plugins` API endpoint can be used.
 
 ## Logging
 
-Optionally, logging can be configured to write all activities of the `rlArtifactoryPlugin` plugin to the default logging directory in Artifactory:
+Optionally, the plugin can be configured to log all activity to a file. This is helpful for troubleshooting purposes.
+Find more information on how to set this up in the [Logging README](README-logging.md).
 
-- `/opt/jfrog/artifactory/var/log/rlArtifactoryPlugin.log`
+## Reference: Artifact properties
 
-To do this, modify the logging configuration file:
+After looking up an OSS package in the Spectra Assure Community data set, the plugin sets a number of properties on the artifact in Artifactory.
+All properties begin with 'secure.software'. The *secure.software.status* property indicates whether the package passed policy or not, and determines if the plugin will prevent the artifact from being downloaded.
 
-- `/opt/jfrog/artifactory/var/etc/artifactory/logback.xml`
+The full list of properties set by the plugin is provided below.
 
-At the end of the file just before the closing XML tag `</configuration>`, add the following:
-
-```xml
-  <!--Plugin: rlArtifactoryPlugin appender -->
-  <appender name="rlArtifactoryPlugin" class="ch.qos.logback.core.rolling.RollingFileAppender">
-    <File>${log.dir}/rlArtifactoryPlugin.log</File>
-    <encoder>
-      <pattern>%date{yyyy-MM-dd'T'HH:mm:ss.SSS, UTC}Z [%p] - %m%n</pattern>
-    </encoder>
-    <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
-      <FileNamePattern>${log.dir.archived}/rlArtifactoryPlugin.%i.log.gz</FileNamePattern>
-      <maxIndex>13</maxIndex>
-    </rollingPolicy>
-    <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
-      <MaxFileSize>25MB</MaxFileSize>
-    </triggeringPolicy>
-  </appender>
-  <!--Plugin: rlArtifactoryPlugin logger -->
-  <logger name="rlArtifactoryPlugin" level="info" additivity="false">
-    <level value="info" />
-    <appender-ref ref="rlArtifactoryPlugin" />
-  </logger>
-```
-
-You can modify the `maxIndex` and `MaxFileSize` values to suit your requirements.
-
-Restart Artifactory to apply your logging configuration changes.
+| Name | Type |  Notes |
+| --   | --   | --     |
+| secure.software.artifact | string | |
+| secure.software.assessments | string | |
+| secure.software.community | string | |
+| secure.software.community_url | url | Link to the full report on Spectra Assure Community |
+| secure.software.deprecated | boolean | |
+| secure.software.first_published | date | |
+| secure.software.hash | string | SHA-256 hash of the package |
+| secure.software.is_quarantined | boolean | Whether the package is marked as quarantined on Spectra Assure Community |
+| secure.software.lastUpdate | date | |
+| secure.software.namespace | string | |
+| secure.software.overrides | string | |
+| secure.software.package | string | Name of the package |
+| secure.software.package_days_ago | integer | Number of days since the initial version was published on the public registry |
+| secure.software.product | string | Name of the software product |
+| secure.software.published | date | Date the package was published on the public registry |
+| secure.software.purl | string | Package URL of the package |
+| secure.software.qual_assessment | string | |
+| secure.software.removed | boolean | 'true' indicates package version was removed from the public registry |
+| secure.software.status | string | 'fail' causes the plugin to block download |
+| secure.software.type | string | |
+| secure.software.uri | string | |
+| secure.software.url_community | string | |
+| secure.software.verdict | string | |
+| secure.software.version_days_ago | integer | Number of days since the package version was published |
+| secure.software.version | string | Version number of the package |
+| secure.software.was_archived | boolean |  |

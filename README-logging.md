@@ -1,9 +1,16 @@
-# Artifactory logging for rlArtifactoryPlugin.groovy
+# rlArtifactoryPlugin
 
-Add at the end of `/var/opt/jfrog/artifactory/etc/artifactory/logback.xml`
-but before the last line with `</configuration>`
+## Logging
 
-change `maxIndex` and `MaxFileSize` to your requirements.
+Optionally, logging can be configured to write all activities of the `rlArtifactoryPlugin` integration to the default logging directory in Artifactory:
+
+- `/opt/jfrog/artifactory/var/log/rlArtifactoryPlugin.log`
+
+To do this, modify the logging configuration file:
+
+- `/opt/jfrog/artifactory/var/etc/artifactory/logback.xml`
+
+At the end of the file, before the closing XML tag `</configuration>`, add the following:
 
 ```xml
   <!--Plugin: rlArtifactoryPlugin appender -->
@@ -26,3 +33,7 @@ change `maxIndex` and `MaxFileSize` to your requirements.
     <appender-ref ref="rlArtifactoryPlugin" />
   </logger>
 ```
+
+You can modify the `maxIndex` and `MaxFileSize` values to suit your requirements.
+
+Restart Artifactory to apply your logging configuration changes.

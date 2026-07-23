@@ -1,0 +1,64 @@
+{
+    "rl-profile": {
+        "schema": 1,
+        "name": "Open Source [minimum]",
+        "info": "Spectra Assure analysis configuration that blocks malicious dependencies that were vetted by ReversingLabs threat analysts.",
+        "timestamp": "2026-01-01T12:00:00+0000",
+        "configuration": {
+            "policy": {
+                "min_catalogue": 5,
+                "rl_scan_level": 1,
+                "rl_auto_approval": false,
+                "assessments": {
+                    "secrets": {
+                        "ignored": true
+                    },
+                    "licenses": {
+                        "ignored": true
+                    },
+                    "vulnerabilities": {
+                        "ignored": false,
+                        "detections": {
+                            "mandate": "warning",
+                            "exploit": "warning",
+                            "malware": "warning",
+                            "critical": "warning"
+                        }
+                    },
+                    "hardening": {
+                        "ignored": true
+                    },
+                    "tampering": {
+                        "ignored": false,
+                        "ml_hunting": "warning"
+                    },
+                    "malware": {
+                        "ignored": false,
+                        "rl_analyst": "fail",
+                        "rl_scanner": "warning",
+                        "suspicious": "warning",
+                        "dependency": {
+                            "develop": "warning",
+                            "release": "fail"
+                        },
+                        "detections": {
+                            "adware": "warning",
+                            "riskware": "warning",
+                            "protestware": "warning",
+                            "spam": "warning"
+                        }
+                    }
+                },
+                "governance": {
+                    "community": {
+                        "min_package_age": 14,
+                        "min_version_age": 0,
+                        "allow": [],
+                        "block": []
+                    }
+                },
+                "overrides": {}
+            }
+        }
+    }
+}
