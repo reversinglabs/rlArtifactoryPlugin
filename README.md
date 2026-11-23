@@ -38,6 +38,7 @@ Install steps:
 1. Copy the 4 `json` files into the `plugins` directory.
 
 The 4 json files are:
+
 - `rl-oss-baseline.json`
 - `rl-oss-hardened.json`
 - `rl-oss-minimum.json`
@@ -73,6 +74,23 @@ All configuration options are documented in [README-properties](README-propertie
 ## Activate the plugin
 
 Restart Artifactory to activate the plugin and apply configuration changes. To reload the plugin without restarting, Artifactory's `Reload plugins` API endpoint can be used.
+
+NOTE: Recent Artifactory versions (seen with 7.173) **disable user plugins automatically** when the `plugins`
+directory is empty at startup, and keep them disabled after a plugin is added. The plugin then does not run and its
+log stays empty. You can recognize this state in two ways:
+
+- `artifactory-service.log` has *"The plugin infrastructure was disabled automatically on an earlier startup and
+  stays disabled"*;
+- `GET /artifactory/api/plugins` answers *"Plugin infrastructure is disabled."*
+
+To enable user plugins, add this line to `/opt/jfrog/artifactory/var/etc/artifactory/artifactory.system.properties`
+and restart Artifactory:
+
+```
+artifactory.plugin.infrastructure.enabled=true
+```
+
+When the log says the infrastructure is *"disabled by entitlement"*, this setting does not help. In that case, it is recommended to contact JFrog for assistance.
 
 ## Logging
 

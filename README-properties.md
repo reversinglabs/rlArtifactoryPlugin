@@ -4,6 +4,17 @@ When the plugin is loaded, it reads configuration settings from the `rlArtifacto
 directory on the JFrog Artifactory server (typically `/opt/jfrog/artifactory/var/etc/artifactory/plugins`). 
 The file uses the standard Java properties file format.
 
+The file is read again on every download, so changes take effect without a restart. If the file is missing or
+cannot be parsed, the plugin logs an ERROR for each download and runs with its built-in defaults (no Spectra Assure Community lookups, an empty admin contact, `block_downloads_failed = true` and no `never_block_*` lists). 
+Artifacts already recorded as blocked (by an earlier lookup or by `rl-scan-artifactory`) therefore **stay blocked**, even when the broken file had `block_downloads_failed = false`.
+
+## Properties of `rl-scan-artifactory` (`RL.*`)
+
+The plugin never writes, changes or deletes properties whose name starts with `RL.`: they belong to
+`rl-scan-artifactory`. That includes the `RL.meta.<name>` properties, which `rl-scan-artifactory` can write to hold
+the information of its meta file. The plugin only reads `RL.timestamp`, `RL.scan-status` and `RL.scan-report`, to
+decide whether a download is blocked. Its own properties all start with `secure.software.`.
+
 ## General settings
 
 ### Admin contact information
@@ -105,6 +116,83 @@ relative to the Artifactory 'plugins' directory.
     community.profile.path = 'rl-profile.json'
 ```
 
+If the configured profile file is missing or invalid, the plugin logs a warning and falls back to
+`rl-oss-baseline.json` in the `plugins` directory. Keep that file installed.
+
+### Customizing a local profile
+
+Start from one of the three provided profiles and edit `configuration.policy`. The plugin evaluates a profile the same
+way as rl-protect, and accepts the same profiles. The main settings:
+
+- `governance.community.allow` / `block`: packages that are always allowed / always blocked.
+- `governance.community.min_package_age` / `min_version_age`: block packages or versions that are too new (days).
+- `governance.community.private`: packages you publish yourself (see below).
+- `overrides`: change the result of one policy (rule ID, e.g. `SQ31102`), optionally only for some packages.
+
+Each `allow`, `block` and `private` entry is a purl pattern **with an audit record** (who, when, why):
+
+```json
+"governance": {
+  "community": {
+    "min_package_age": 30,
+    "min_version_age": 1,
+    "allow": [
+      { "pattern": "pkg:pypi/flask@3.1.*",
+        "audit": { "author": "jane@example.com", "timestamp": "2026-11-06T10:00:00+0000", "reason": "Reviewed" } }
+    ],
+    "block": [
+      { "pattern": "pkg:npm/ua-parser-js@0.7.*",
+        "audit": { "author": "jane@example.com", "timestamp": "2026-11-06T10:00:00+0000", "reason": "Compromised releases" } }
+    ],
+    "private": [
+      { "pattern": "pkg:npm/@mycorp/*",
+        "audit": { "author": "jane@example.com", "timestamp": "2026-11-06T10:00:00+0000", "reason": "Our internal scope" } }
+    ]
+  }
+}
+```
+
+**Purl patterns** (allow, block, private and override `patterns`):
+
+- `*` matches any text, including `/`; `[abc]` and `[!abc]` match one character; `\` escapes; `?` is a literal
+  (it starts the qualifiers in a purl).
+- Matching ignores case. `pkg:npm/@scope/name` and `pkg:npm/%40scope/name` are the same.
+  PyPI names are compared with `-`, `_` and `.` all as `-` (`typing_extensions` = `typing-extensions`).
+- A pattern without a version (`pkg:pypi/six`) covers every version; `pkg:pypi/six@1.16.*` covers some.
+- Qualifiers are ignored unless the pattern has one (`pkg:pypi/six@1.16.0?artifact=*.whl`).
+
+**Overrides limited to some packages.** Without `patterns` an override applies to every package. With `patterns`
+it applies only to the packages that match. An empty `patterns` list is not allowed.
+
+```json
+"overrides": {
+  "SQ31102": {
+    "enabled": false,
+    "patterns": ["pkg:npm/jshint@*"],
+    "audit": { "author": "jane@example.com", "timestamp": "2026-11-06T10:00:00+0000", "reason": "False positive" }
+  }
+}
+```
+
+`"enabled": false` turns the policy off for those packages; `"blocker": "fail"` makes it always fail.
+A missing `enabled` means `true`.
+
+**Private packages and dependency confusion.** List the packages you publish yourself under `private`. When such a
+package is found in the public Spectra Assure Community data, someone has published a package with your name on a
+public registry: a possible dependency-confusion attack. The plugin logs a **WARN** with the matching entry and its
+audit, for example:
+
+```
+Declared-private package 'pkg:npm/%40mycorp/tools@1.0.0' resolves on the public registry - possible dependency confusion (declared private by jane@example.com at 2026-11-06T10:00:00+0000: Our internal scope)
+```
+
+The download itself is **not** blocked by this; add a `block` entry if you want that.
+
+**Profile checks.** A profile with an error is not used: the plugin logs a WARN per problem and falls back (see
+above). Typical errors: an `allow`/`block`/`private` entry without a complete `audit`; an audit timestamp that is not
+ISO 8601 (`2026-11-06T10:00:00+0000`); a pattern that is not a purl or has an unclosed `[`; an empty `patterns` list;
+`blocker` other than `pass`/`fail`; `rl_scan_level` outside 1–5.
+
 NOTE: If using the Portal API, the profile defined at the organization or group level on your Portal instance will be used. 
 
 ### For Portal API users only
@@ -148,13 +236,36 @@ The rlArtifactoryPlugin currently supports the following types of Artifactory re
  - PyPI
  - NuGet
  - RubyGems
+ - Maven (since 2.2.0; only binaries are looked up: `.jar`, `.war`, `.ear`, `.aar`, not `-sources.jar` / `-javadoc.jar`.
+   Other files in a Maven repo, such as `.pom`, checksums and `maven-metadata.xml`, are served without a lookup.)
+ - Gradle (since 2.3.0; Artifactory Gradle repositories use the Maven layout, so the same files are looked up as for
+   Maven. Gradle `.module` files and Gradle plugin marker `.pom` files are served without a lookup.)
 
 To exclude certain repository/package types from being analyzed by the plugin, configure the `community.inspectPackageTypes` list
 as desired. All supported repositories are included by default.
 
 ```groovy
-    community.inspectPackageTypes = [ 'npm','pypi','nuget','gems']
+    community.inspectPackageTypes = [ 'npm','pypi','nuget','gems','maven','gradle']
 ```
+
+The names in `community.inspectPackageTypes` are **Artifactory repository package types**, not Spectra Assure
+Community ecosystems. The plugin looks up each file by its SHA-256 hash, and the Community reports the package it matched with the file. A Gradle repository holds Maven artifacts, so there is no separate Gradle ecosystem:
+
+| Artifactory repository type | Spectra Assure Community ecosystem | Purl in profile patterns |
+|---|---|---|
+| `npm` | npm | `pkg:npm/...` |
+| `pypi` | PyPI | `pkg:pypi/...` |
+| `nuget` | NuGet | `pkg:nuget/...` |
+| `gems` | RubyGems | `pkg:gem/...` |
+| `maven` | Maven | `pkg:maven/...` |
+| `gradle` | Maven | `pkg:maven/...` |
+
+NOTE: Gradle plugins that are only published on the Gradle Plugin Portal (`plugins.gradle.org`), and not on
+Maven Central, are probably not in the Spectra Assure Community. For such a file the plugin finds no data, and the
+download is allowed, as for any other file the Community does not know.
+
+Unsupported names are ignored with a WARN. If the list contains no supported type at all, **no** repository is
+analyzed (and a WARN is logged); before 2.2.0 such a list meant "analyze everything".
 
 If the plugin starts to see HTTP 429 responses from the API, the rate at which requests are sent is adapted automatically. 
 This can be disabled - although not recommended - by setting `community.autoAdaptToRateLimit` to 'false'. 
@@ -178,4 +289,9 @@ The time delays for when data is deemed recent or not can be configured as follo
     // if community data does not exist on the artifact, default: 240 (10 days)
     community.notfoundDelay = 240
 ```
+
+The age of the last lookup is counted in whole hours, rounded down. The next lookup is done when the last one is
+at least `delay + 1` hours old: with `refreshDelay = 24` after 25 hours, with `0` after 1 hour. A delay of `0`
+therefore means "at most once per hour", not "on every download". An artifact without any lookup yet is always
+looked up.
 

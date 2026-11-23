@@ -34,6 +34,9 @@ import org.artifactory.api.repo.exception.ItemNotFoundRuntimeException
 import org.reversinglabs.securesoftwareapi.MyConfig
 import org.reversinglabs.securesoftwareapi.RlCommunityProcessor
 import org.reversinglabs.securesoftwareapi.BlockAnalizer
+import org.reversinglabs.securesoftwareapi.MavenFiles
+import org.reversinglabs.securesoftwareapi.Verdict
+import org.reversinglabs.securesoftwareapi.NativeCopies
 import org.reversinglabs.securesoftwareapi.StackTraceAsStringTrait
 
 ///////////////////////////////////////////////////////////////////
@@ -165,7 +168,7 @@ class RlArtifactoryAdapter implements StackTraceAsStringTrait { // groovylint-di
             this.file = this.repoPath.isFile() //  bool
         } catch (e) {
             printTrace(mName, e)
-            this.logger.error '{}: {}', context, e
+            this.logger.error '{}: {}', context, e.toString(), e
         }
     }
 
@@ -186,7 +189,7 @@ class RlArtifactoryAdapter implements StackTraceAsStringTrait { // groovylint-di
             this.verbose = this.myConfig.verbose
         } catch (e) {
             printTrace(mName, e)
-            this.logger.error '{}: myConfig Failed: {}', context, e
+            this.logger.error '{}: myConfig Failed: {}', context, e.toString(), e
             return false
         }
         return true
@@ -213,7 +216,7 @@ class RlArtifactoryAdapter implements StackTraceAsStringTrait { // groovylint-di
             return props1
         } catch (e) {
             printTrace(mName, e)
-            this.logger.error '{}: Failed: {}', context, e
+            this.logger.error '{}: Failed: {}', context, e.toString(), e
         }
 
         return [:]
@@ -235,7 +238,7 @@ class RlArtifactoryAdapter implements StackTraceAsStringTrait { // groovylint-di
             this.logger.warn '{}: no sha256 yet', context
         } catch (e) {
             printTrace(mName, e)
-            this.logger.error '{}: no fileInfo (sha256) here {}', context, e
+            this.logger.error '{}: no fileInfo (sha256) here {}', context, e.toString(), e
         }
         return ''
     }
@@ -256,7 +259,12 @@ class RlArtifactoryAdapter implements StackTraceAsStringTrait { // groovylint-di
         // call the ReversingLabs Community processor
         try {
             if (this.verbose) this.logger.info '{}: server: {}' , context , this.myConfig.community.server
-            if (this.myConfig.community.server) {
+            // Q22 (2.2.0): in a Maven (2.3.0: or Gradle) repo only binaries (.jar/.war/.ear/.aar) are looked up
+            boolean inspectFile = MavenFiles.shouldInspect(this.pType, this.path)
+            if (!inspectFile && this.verbose) {
+                this.logger.info '{}: {} repo, no lookup for {}', context, this.pType, this.path
+            }
+            if (this.myConfig.community.server && inspectFile) {
                 this.rcp = new RlCommunityProcessor(
                     this.logger,
                     this.verbose,
@@ -280,7 +288,9 @@ class RlArtifactoryAdapter implements StackTraceAsStringTrait { // groovylint-di
 
                 // -------------------------------
                 // currentProps start
-                Map currentProps = rcp.myProps()
+                // Q28 (2.3.4): only new community data is written. Without it, myProps() returns all stored
+                // properties, and writing those back copied the native ones (npm.name, ...) into secure.software.*
+                Map currentProps = rcp.newProps ? new LinkedHashMap(rcp.newProps) : [:]
                 if (this.verbose) this.logger.info '{}: currentProps: {}' , context , currentProps
 
                 // -------------------------------
@@ -291,18 +301,15 @@ class RlArtifactoryAdapter implements StackTraceAsStringTrait { // groovylint-di
                 }
 
                 // -------------------------------
-                currentProps.verdict = currentProps.status as String
-                String block = 'block'
-                if (currentProps.status == 'fail') {
-                    currentProps.verdict = block
-                }
-
-                if (currentProps.removed ==  true) {
-                    currentProps.verdict =  block
-                }
-
-                if (currentProps.is_quarantined) { // not null
-                    currentProps.verdict = block
+                // Q21: only (re)compute the verdict when this event produced new community data: those props
+                // have plain keys ('status'). Without new data, myProps() returns the stored Artifactory
+                // properties (namespaced: 'secure.software.status'); then the stored verdict stays as it is.
+                // Before, 'status' was missing there and secure.software.verdict was overwritten with 'null'.
+                if (currentProps.status != null) {
+                    // SPEC-4.5: the verdict rule lives in the jar (Verdict.of, 2.3.3), unit-tested offline
+                    currentProps.verdict = Verdict.of(currentProps.status, currentProps.removed, currentProps.is_quarantined)
+                } else {
+                    currentProps.remove('verdict') // never write a computed 'null'
                 }
                 if (this.verbose) this.logger.info '{}: currentProps: {}' , context , currentProps
 
@@ -311,6 +318,7 @@ class RlArtifactoryAdapter implements StackTraceAsStringTrait { // groovylint-di
             }
 
             // refetch the props from artifactory and pass them to the next stage
+            this.removeNativeCopies(props1) // Q28: remove copies made by older versions
             props2 = this.currentPropertiesAsMap()
             if (this.file) {
                 this.logger.debug '{}: repoKey: {}; pType: {}; hash: {}; current-props: {}', mName,
@@ -318,10 +326,25 @@ class RlArtifactoryAdapter implements StackTraceAsStringTrait { // groovylint-di
             }
         } catch (e) {
             printTrace(mName, e)
-            this.logger.error '{}: RlCommunityProcessor Failed: {}', context, e
+            this.logger.error '{}: RlCommunityProcessor Failed: {}', context, e.toString(), e
             return [:]
         }
         return props2
+    }
+
+    /** Q28 (2.3.4): delete the secure.software.<native key> copies that versions before 2.3.4 wrote. */
+    private void removeNativeCopies(Map props1) {
+        String mName = 'removeNativeCopies'
+        String context = "${this.what}::${mName}"
+        try {
+            for (String key in NativeCopies.keysToRemove(props1, this.namespace)) {
+                this.logger.debug '{}: remove copied native property {}', context, key
+                this.repositories.deleteProperty(this.repoPath, key)
+            }
+        } catch (e) {
+            printTrace(mName, e)
+            this.logger.error '{}: cannot remove copied native properties: {}', context, e.toString(), e
+        }
     }
 
     private boolean doNewProps(Map newProps) {
@@ -333,7 +356,7 @@ class RlArtifactoryAdapter implements StackTraceAsStringTrait { // groovylint-di
         String mName = 'doNewProps'
         String context = "${this.what}::${mName}"
         this.logger.debug '{}: about to update props: {}', context, newProps
-        this.logger.debug '{}: native no update keys: {}', context, this.originPropsClean
+        this.logger.debug '{}: native keys (never written, all writes are namespaced): {}', context, this.originPropsClean
 
         try {
             for (item in newProps) {
@@ -347,11 +370,9 @@ class RlArtifactoryAdapter implements StackTraceAsStringTrait { // groovylint-di
                     continue
                 }
 
-                if (this.originPropsClean.containsKey(key)) { // they are not ours to change
-                    this.logger.debug '{}: skip native. {}', context, key
-                    continue
-                }
-
+                // Q26 (2.3.2): native properties (no namespace, no RL.) are safe because every key is written
+                // with the namespace below. The old check compared the plain key ('status', 'purl', ...) with
+                // the native keys, so a native 'status' stopped secure.software.status from being written.
                 if (!key.startsWith(this.namespace)) {
                     this.logger.debug '{}: add namespace {} to key {}', context, this.namespace, key
 
@@ -364,7 +385,7 @@ class RlArtifactoryAdapter implements StackTraceAsStringTrait { // groovylint-di
             return true
         } catch (e) {
             printTrace(mName, e)
-            this.logger.error '{}: setProps Exception: {}', context, e
+            this.logger.error '{}: setProps Exception: {}', context, e.toString(), e
         }
         return false
     }
@@ -383,7 +404,7 @@ class RlArtifactoryAdapter implements StackTraceAsStringTrait { // groovylint-di
             }
         } catch (e) {
             printTrace(mName, e)
-            this.logger.error '{}: cannot fetch properties: {}', context, e
+            this.logger.error '{}: cannot fetch properties: {}', context, e.toString(), e
         }
         return this.props
     }
@@ -419,7 +440,7 @@ class RlArtifactoryAdapter implements StackTraceAsStringTrait { // groovylint-di
             }
         } catch (e) {
             printTrace(mName, e)
-            this.logger.error '{}: BlockAnalizer Failed: {}', context, e
+            this.logger.error '{}: BlockAnalizer Failed: {}', context, e.toString(), e
         }
         return [:]
     }
@@ -487,7 +508,7 @@ download {
         String clientAddress = request.clientAddress ?: ''
         String myPropertiesPath = 'plugins/rlArtifactoryPlugin.properties'
         String homeDir = "${ctx.artifactoryHome.etcDir}"
-        String userAgent = 'rlArtifactoryPlugin v2.0.0'
+        String userAgent = 'rlArtifactoryPlugin v2.1.0'
         int verbose = 0
 
         if (!responseRepoPath.file) { return }
@@ -517,7 +538,7 @@ download {
             log.warn '{}: blocking item: {}', context, msg
         } catch (e) {
             e.printStackTrace(System.out)
-            log.error '{}: rlBlockVerdictOnDownload error: {}', context, e
+            log.error '{}: rlBlockVerdictOnDownload error: {}', context, e.toString(), e
             return // groovylint-disable ReturnNullFromCatchBlock
         // lets not block the download on internal errors
         }
@@ -570,7 +591,7 @@ download {
         String clientAddress = request.clientAddress ?: ''
         String myPropertiesPath = 'plugins/rlArtifactoryPlugin.properties' // groovylint-disable DuplicateStringLiteral
         String homeDir = "${ctx.artifactoryHome.etcDir}"
-        String userAgent = 'rlArtifactoryPlugin v2.0.0'
+        String userAgent = 'rlArtifactoryPlugin v2.1.0'
         int verbose = 0
 
         if (!responseRepoPath.file) { return }
